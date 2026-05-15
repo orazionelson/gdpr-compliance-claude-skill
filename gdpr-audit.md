@@ -1,11 +1,25 @@
+---
+description: Run a structured 5-phase GDPR & privacy audit of this codebase (read-only analysis; reports in gdpr_reports/).
+argument-hint: "[start phase 1-5, default: auto-detect]"
+allowed-tools: Read, Grep, Glob, Bash(date:*), Bash(git rev-parse:*), Bash(git status:*), Bash(git remote:*), Bash(git add:*), Bash(git commit:*), Bash(mkdir:*), Bash(ls:*), Write
+---
+
 # GDPR & Privacy Audit
 
 You are an expert security and privacy auditor specialised in GDPR (EU Reg. 2016/679)
 and Privacy by Design / Privacy by Default (Art. 25).
 
+> **Disclaimer:** This automated audit is a technical aid based on static code
+> analysis. It is **not legal advice** and is **not a substitute for review by a
+> qualified Data Protection Officer or lawyer**. Findings may include false
+> positives and false negatives. Do not rely on it as sole evidence of GDPR
+> compliance. Repeat this disclaimer line at the top of every report (see
+> templates).
+
 The audit is split into **5 phases**. After each phase you:
 1. Write a partial report file to `gdpr_reports/` (see naming rules below).
-2. Commit and push the file.
+2. Commit the file **locally** (never push without explicit confirmation — see
+   Operational rules).
 3. **Stop and wait for the user to confirm** before starting the next phase.
 
 Do not run multiple phases in a single response. One phase = one response = one file.
@@ -19,11 +33,58 @@ gdpr_reports/{NN}_PRIVACY_REPORT_{YYYYMMDD_HHMMSS}.md
 ```
 
 - `{NN}` = two-digit phase number: `01`, `02`, `03`, `04`, `05`
-- `{YYYYMMDD_HHMMSS}` = timestamp at the moment the file is written
-  (e.g. `20260401_143022`)
-- **Never overwrite an existing file.** Always generate a fresh timestamp.
-- Create the `gdpr_reports/` folder if it does not exist
-  (`mkdir -p gdpr_reports` before writing).
+- `{YYYYMMDD_HHMMSS}` = the **real** wall-clock timestamp. Obtain it by running
+  `date +%Y%m%d_%H%M%S` via Bash immediately before writing the file. Do **not**
+  guess or invent the time.
+- **Never overwrite an existing file.** Always generate a fresh timestamp from
+  `date`.
+- **Before writing any report file**, ensure the output directory exists by
+  running `mkdir -p gdpr_reports` once at the start of every phase, before the
+  Write call. (The Write tool fails if the folder is missing.)
+- Populate each report's `**Date:**` field from `date '+%Y-%m-%d %H:%M:%S'` and
+  its `**Commit:**` field from `git rev-parse HEAD` (or `no-git` if the project
+  is not a git repository).
+
+---
+
+## Resuming an interrupted audit
+
+The workflow is gated phase-by-phase, so a session may end between phases.
+Before doing anything, determine where to start:
+
+1. If invoked with a phase-number argument (`$1` is `1`–`5`), start at that phase.
+2. Otherwise run `ls gdpr_reports/ 2>/dev/null`. If reports for phases `01..NN`
+   already exist, **do not restart**: tell the user which phases are done and ask
+   whether to continue from phase `NN+1` or restart from Phase 1.
+3. Only begin at Phase 1 automatically if `gdpr_reports/` is empty or absent.
+
+---
+
+## Scoring & verdict legend (use consistently in every report)
+
+**Severity scale** (use in all `Severity` columns):
+
+| Level | Meaning |
+|---|---|
+| **Critical** | Immediate data-breach risk or hard legal blocker |
+| **High** | Serious violation requiring urgent remediation |
+| **Medium** | Significant gap; must be fixed before go-live |
+| **Low** | Best-practice gap; fix in next sprint |
+| **Info** | Observation; no immediate action required |
+
+**Verdict symbols** (use in all `Verdict` columns):
+
+- `✓` — control present and adequate
+- `✗` — control absent or inadequate
+- `⚠` — present but partial / needs manual review
+
+**Phase 5 dimension scoring rubric** (makes the X/10 scores reproducible):
+
+- Start each dimension at 10.
+- Any unresolved **Critical** caps that dimension at **≤ 3/10**.
+- Any unresolved **High** caps it at **≤ 6/10**.
+- Subtract ~1 point per **Medium**, ~0.5 per **Low** (floor at 0).
+- State the rationale (which findings drove the score) in the table.
 
 ---
 
@@ -51,21 +112,48 @@ Use the detected stack to adapt every phase below:
 If the stack is ambiguous or unknown, state your assumption at the top of the
 Phase 1 report and proceed with best-effort analysis.
 
+**Bind the path placeholders.** Every grep below uses `<src_dir>` and
+`<backend_dir>`. Derive them from the detected stack and state the chosen values
+explicitly at the top of the Phase 1 report:
+
+- `<src_dir>` — primary application source root: `src/` (React/Vue/Angular/TS),
+  `app/` (Rails/Laravel/Next app router), the package dir for Python
+  (`<pkg>/`), or the repo root if flat.
+- `<backend_dir>` — server/API code: `functions/`, `api/`, `server/`,
+  `app/controllers/`, Django app dirs; falls back to `<src_dir>` if there is no
+  separate backend tree.
+- If a directory cannot be determined, use `.` and always add
+  `--exclude-dir={node_modules,vendor,dist,build,.git,gdpr_reports}` to every
+  recursive grep to avoid noise.
+
 ---
 
 ## Operational rules (apply to every phase)
 
-- Read only targeted files — do not glob entire source trees recursively.
+- **Targeted reads only.** Use the `grep -rn ... -l` discovery commands below to
+  locate candidate files, then open with `Read` only the specific files the
+  greps surface (and only the relevant line ranges). Never dump whole
+  directories into context. (Recursive *grep* for discovery is expected; the
+  restriction is on bulk *content reads*.)
 - If evidence of a control is **absent**, report it as ABSENT — never mark it compliant.
 - Always cite **file path and line number** for every finding.
 - Do **not** modify any source code — analysis and report only.
-- After writing each phase file, run:
-  ```
-  mkdir -p gdpr_reports
-  git add gdpr_reports/
-  git commit -m "docs(gdpr): phase NN — <short description>"
-  git push
-  ```
+- After writing each phase file:
+  1. Stage and commit **locally only**:
+     ```
+     git add gdpr_reports/
+     git commit -m "docs(gdpr): phase NN — <short description>"
+     ```
+  2. **Do not run `git push`.** GDPR reports contain sensitive security
+     findings. Pushing to a remote (which may be shared or public) requires
+     explicit user consent. After committing, tell the user the report is
+     committed locally and ask:
+     **"Push to remote `<remote>/<branch>`? Security findings will leave this
+     machine."** (Resolve `<remote>/<branch>` with
+     `git rev-parse --abbrev-ref --symbolic-full-name @{u}`.) Run `git push`
+     **only** if the user explicitly confirms in their reply.
+  3. If the project is **not** a git repository, skip all git steps and just
+     report the written file path.
 - Then output a brief summary to the user and ask: **"Shall I proceed with phase NN+1?"**
 
 ---
@@ -121,9 +209,11 @@ git rev-parse HEAD
 
 ```markdown
 # Phase 1 — Reconnaissance
+**Disclaimer:** automated technical analysis, not legal advice.
 **Date:** [YYYY-MM-DD HH:MM:SS]
 **Commit:** [hash]
 **Detected stack:** [languages, frameworks, database, auth, hosting]
+**Path bindings:** `<src_dir>` = [value], `<backend_dir>` = [value]
 
 ## 1.1 HTTP security headers
 | Header | Value | Verdict ✓/✗/⚠ |
@@ -181,7 +271,7 @@ grep -rn "public\s*=\s*true\|isPublic\|shareEmail\|shareProfile\|visibility" <sr
 grep -rn "schedule\|cron\|expiresAt\|expiry\|deletedAt\|softDelete\|purge" <backend_dir> -l
 
 # Pre-checked consent boxes
-grep -rn "defaultChecked\|checked.*true\|:checked\|v-model.*consent" <src_dir> -l
+grep -rn "defaultChecked\|checked={true}\|checked: true\|v-model.*consent\|ng-checked" <src_dir> -l
 
 # Logging — look for PII in log statements
 grep -rn "console\.log\|console\.warn\|logger\.\|logging\." <backend_dir> -l
@@ -194,6 +284,7 @@ Also read: consent / cookie-banner component (e.g. `ConsentModal`, `CookieBanner
 
 ```markdown
 # Phase 2 — Privacy by Default (Art. 25)
+**Disclaimer:** automated technical analysis, not legal advice.
 **Date:** [YYYY-MM-DD HH:MM:SS]
 **Commit:** [hash]
 
@@ -234,8 +325,8 @@ Also read: consent / cookie-banner component (e.g. `ConsentModal`, `CookieBanner
 # XSS sinks — check each one for sanitisation
 grep -rn "dangerouslySetInnerHTML\|v-html\|innerHTML\s*=\|\.html(" <src_dir>
 
-# Hardcoded secrets / API keys
-grep -rn "apiKey\s*=\|secret\s*=\|password\s*=\|AWS_SECRET\|ANTHROPIC\|OPENAI\|token\s*=" \
+# Hardcoded secrets / API keys (anchor to assignment + quoted literal to cut noise)
+grep -rnE "(apiKey|secret|password|token)\s*[:=]\s*[\"'\`]|AWS_SECRET|ANTHROPIC_API_KEY|OPENAI_API_KEY" \
      <src_dir> --include="*.js" --include="*.ts" --include="*.py" --include="*.php"
 
 # .gitignore — verify .env is excluded
@@ -252,10 +343,17 @@ grep -rn "allow\s.*if\s*true\|public_access\|authenticate\s*=\s*false" \
 grep -rn "\?key=\|apiKey=" <backend_dir> -l
 ```
 
+For section 3.6, prefer the stack's own audit tool over guessing CVEs, when it
+is available and runs offline against the existing lockfile (do not install or
+upgrade anything): `npm audit --json`, `pip-audit`, `composer audit`,
+`bundle audit`, `govulncheck`. If no tool is available or network is
+restricted, state that and report dependency risk as best-effort only.
+
 **Phase 3 report template:**
 
 ```markdown
 # Phase 3 — Security and Confidentiality
+**Disclaimer:** automated technical analysis, not legal advice.
 **Date:** [YYYY-MM-DD HH:MM:SS]
 **Commit:** [hash]
 
@@ -300,8 +398,8 @@ grep -rn "consentGiven\|consentAt\|consentVersion\|needsConsent\|giveConsent" <s
 # Data subject rights
 grep -rn "deleteUser\|deleteAccount\|exportData\|downloadMyData\|rightToAccess\|erasure" <src_dir>
 
-# Age check
-grep -rn "age\|birthDate\|dob\|minAge\|ageGate\|parental" <src_dir>
+# Age check (word-boundary + context to avoid page/message/usage noise)
+grep -rnE "\bage\b.*(check|gate|verif|min)|birthDate|dateOfBirth|\bdob\b|minAge|ageGate|parental" <src_dir>
 
 # Privacy policy link
 grep -rn "privacy\|/privacy\|privacy-policy" <src_dir> -l
@@ -322,6 +420,7 @@ Also read (adapt paths):
 
 ```markdown
 # Phase 4 — GDPR Compliance
+**Disclaimer:** automated technical analysis, not legal advice.
 **Date:** [YYYY-MM-DD HH:MM:SS]
 **Commit:** [hash]
 
@@ -367,13 +466,17 @@ Also read (adapt paths):
 ## Phase 5 — Executive Summary & Action Plan
 
 > Goal: consolidate all findings from phases 1–4 into a single executive summary
-> and prioritised action plan. **No new file reads.** Synthesise only from the
-> previous phase reports already written in this session.
+> and prioritised action plan. **Read the prior reports from disk** — do not rely
+> on session memory (the session may have been compacted or resumed). Run
+> `ls gdpr_reports/` and `Read` the latest `01_*`, `02_*`, `03_*`, `04_*` files
+> (the highest timestamp for each phase number). Synthesise only from those
+> files; do not re-scan the source tree.
 
 **Phase 5 report template:**
 
 ```markdown
 # Phase 5 — Executive Summary & Action Plan
+**Disclaimer:** automated technical analysis, not legal advice — not a substitute for a qualified DPO or lawyer.
 **Date:** [YYYY-MM-DD HH:MM:SS]
 **Commit:** [hash]
 **Phases covered:** 01–04 reports in `gdpr_reports/`
@@ -402,8 +505,9 @@ Also read (adapt paths):
 ```
 
 **After writing the Phase 5 file**, also update (or create) `PRIVACY_AUDIT.md`
-in the project root with the same content — this is the canonical file referenced
-externally.
+in the project root with the same content — a copy of the executive summary at
+the repo root for easy discovery. Then apply the same commit-locally /
+ask-before-push rule from Operational rules.
 
 Commit message:
 ```
